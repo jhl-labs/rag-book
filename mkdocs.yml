@@ -55,3 +55,4 @@ nav:
     - "6. 고급 RAG 기법": chapters/06-advanced-rag.md
     - "7. 실전 프로젝트: 업무 AI 검색 에이전트": chapters/07-enterprise-rag-project.md
     - "8. Context7과 MCP 기반 RAG": chapters/08-context7-mcp-rag.md
+    - "9. 대형 임베딩 모델과 연계 DB": chapters/09-large-embedding-models.md
