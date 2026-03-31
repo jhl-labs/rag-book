@@ -1070,6 +1070,9 @@ def compare_compression_methods(question: str, vectorstore: Chroma):
 
 ### 완전한 코드 예제
 
+!!! warning "구현 참고"
+    아래 코드는 Self-RAG의 핵심 아이디어(검색 필요성 판단 → 관련성 평가 → 근거 확인 → 유용성 평가)를 **일반 LLM 프롬프트로 근사 구현**한 것입니다. 원본 Self-RAG 논문(Asai et al., 2023)은 `[Retrieve]`, `[ISREL]`, `[ISSUP]`, `[ISUSE]` 같은 **특수 반성 토큰(reflection tokens)**을 학습한 파인튜닝 모델을 사용하며, 이 코드와 동작 방식이 다릅니다. 실제 원본 구현은 [selfrag/selfrag_llama2_7b](https://huggingface.co/selfrag/selfrag_llama2_7b) 모델을 참고하세요.
+
 ```python
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -1123,8 +1126,10 @@ def parse_json_response(response: str) -> dict:
         elif "```" in response:
             response = response.split("```")[1].split("```")[0]
         return json.loads(response.strip())
-    except:
+    except Exception as e:
         # 파싱 실패 시 기본값
+        import logging
+        logging.warning(f"Self-RAG 응답 파싱 실패: {e}")
         return {"relevant": True, "grounded": True, "sufficient": True}
 
 def self_rag(
@@ -1707,7 +1712,9 @@ def enterprise_qa_pipeline(
         try:
             compressed = compressor.compress_documents([doc], question)
             compressed_context.extend(compressed)
-        except:
+        except Exception as e:
+            import logging
+            logging.warning(f"문서 압축 실패, 원본 사용: {e}")
             compressed_context.append(doc)
 
     # ⑤ 최종 답변 생성
@@ -1997,7 +2004,7 @@ COMPLEX 질문 (전체의 ___%) → 전략: ___________
 
 ## 핵심 요약
 
-!!! summary "이것만 기억하자"
+!!! abstract "핵심 요약"
 
     **쿼리 변환 (검색 전 개선)**
     - **HyDE**: 가상 답변으로 질문-문서 갭 해소 → 짧고 모호한 질문에 효과적

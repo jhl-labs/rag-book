@@ -1627,7 +1627,10 @@ def run_evaluation(test_cases: list, rag_chain, rag_retriever) -> dict:
     for i, case in enumerate(test_cases, 1):
         print(f"\n[테스트 {i}/{len(test_cases)}]")
         question = case["question"]
+        expected = case.get("expected", "")  # 기대 답변 (있을 경우 참고용)
         print(f"질문: {question}")
+        if expected:
+            print(f"기대 답변 (참고): {expected}")
 
         # RAG 실행
         retrieved_docs = rag_retriever.invoke(question)
@@ -1743,6 +1746,14 @@ RAG 시스템 품질 평가 시작
 ----------------------------------------
 전체 평균 점수:        0.912 [OK]
 ```
+
+!!! tip "전문 평가 프레임워크"
+    실제 프로덕션에서는 `ragas` 라이브러리를 사용하면 위의 평가 로직을
+    자동화할 수 있습니다. Faithfulness, Answer Relevancy, Context Precision,
+    Context Recall 등의 표준 지표를 제공합니다.
+    ```bash
+    pip install ragas
+    ```
 
 ---
 
@@ -2055,12 +2066,12 @@ class ProductionRAGPipeline:
         retriever,
         chain,
         max_retries: int = 3,
-        timeout: int = 30
+        timeout: int = 30  # 참고: 실제 타임아웃 적용은 asyncio.wait_for 또는 httpx timeout 설정 필요
     ):
         self.retriever = retriever
         self.chain = chain
         self.max_retries = max_retries
-        self.timeout = timeout
+        self.timeout = timeout  # 현재는 로깅용으로만 사용; 실제 적용 시 LLM 클라이언트에 request_timeout 파라미터 전달
         self._request_count = 0
         self._error_count = 0
 
