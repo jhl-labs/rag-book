@@ -103,7 +103,7 @@
 
     토큰은 단어일 수도, 단어의 일부일 수도, 구두점일 수도 있습니다.
     **최대 토큰** 수는 모델이 한 번에 처리할 수 있는 텍스트의 길이를 의미합니다.
-    예: 최대 8,191 토큰 ≈ 약 6,000~8,000 단어 ≈ 약 20~30페이지 분량
+    예: 최대 8,192 토큰 ≈ 약 6,000~8,000 단어 ≈ 약 20~30페이지 분량
 
 ---
 
@@ -660,8 +660,8 @@ doc_vectors = doc_response.embeddings.float
 query_vector = query_response.embeddings.float[0]
 
 print(f"문서 임베딩 수: {len(doc_vectors)}")          # 2
-print(f"쿼리 임베딩 차원: {len(query_vector)}")        # 1024
-print(f"문서1 임베딩 차원: {len(doc_vectors[0])}")     # 1024
+print(f"쿼리 임베딩 차원: {len(query_vector)}")        # 1536
+print(f"문서1 임베딩 차원: {len(doc_vectors[0])}")     # 1536
 
 # 다른 input_type 옵션들:
 # "classification"  : 텍스트 분류 작업
@@ -672,9 +672,13 @@ print(f"문서1 임베딩 차원: {len(doc_vectors[0])}")     # 1024
 **예상 출력:**
 ```
 문서 임베딩 수: 2
-쿼리 임베딩 차원: 1024
-문서1 임베딩 차원: 1024
+쿼리 임베딩 차원: 1536
+문서1 임베딩 차원: 1536
 ```
+
+!!! note "embed-v4.0 차원 및 멀티모달 지원"
+    - **기본 차원**: 1536 (256 / 512 / 1024 / 1536 중 선택 가능)
+    - **멀티모달**: embed-v4.0은 텍스트뿐 아니라 **이미지+텍스트 혼합 임베딩**도 지원합니다 (`input_type="image"` 사용)
 
 ---
 
@@ -695,17 +699,17 @@ print(f"문서1 임베딩 차원: {len(doc_vectors[0])}")     # 1024
 
 | 모델 | 제공사 | 차원 | 최대 토큰 | 특징 | 추천 용도 |
 |------|--------|------|-----------|------|-----------|
-| **text-embedding-3-large** | OpenAI | 3072 | 8,191 | 차원 축소 가능, 범용적 | 일반 RAG, 범용 검색 |
-| **text-embedding-3-small** | OpenAI | 1536 | 8,191 | 저비용, 빠른 속도 | 예산 제한, 대용량 처리 |
-| **embed-v4.0** | Cohere | 1024 | 128,000 | 초장문 지원, input_type | 긴 문서 처리, 기업용 |
-| **voyage-3-large** | Voyage AI | 1024 | 32,000 | 코드 임베딩 강점 | 코드 검색, 기술 문서 |
-| **Gemini Embedding** | Google | 3072 | 8,192 | Task type 지정 가능 | Google 생태계 통합 |
+| **text-embedding-3-large** | OpenAI | 3072 | 8,192 | 차원 축소 가능, 범용적 | 일반 RAG, 범용 검색 |
+| **text-embedding-3-small** | OpenAI | 1536 | 8,192 | 저비용, 빠른 속도 | 예산 제한, 대용량 처리 |
+| **embed-v4.0** | Cohere | 1536 | 128,000 | 초장문·멀티모달 지원, input_type (256/512/1024/1536 선택 가능) | 긴 문서 처리, 기업용 |
+| **voyage-3-large** | Voyage AI | 1024 | 32,000 | 범용/다국어 강점 (코드 특화는 voyage-code-3) | 범용 검색, 다국어 문서 |
+| **gemini-embedding-001** | Google | 3072 | 2,048 | Task type 지정 가능 (GA 모델); 최신 preview: gemini-embedding-2-preview (8192 토큰, 멀티모달) | Google 생태계 통합 |
 
 ### 오픈소스 모델
 
 | 모델 | 차원 | 최대 토큰 | 특징 | 추천 용도 |
 |------|------|-----------|------|-----------|
-| **GTE-Qwen2-7B-instruct** | 3584 | 131,072 | 초장문 지원, 최상위 성능 | 긴 문서 RAG, 로컬 실행 |
+| **GTE-Qwen2-7B-instruct** | 3584 | 32,768 | 초장문 지원, 최상위 성능 | 긴 문서 RAG, 로컬 실행 |
 | **NV-Embed-v2** | 4096 | 32,768 | NVIDIA 최적화 | GPU 보유 시, 고성능 |
 | **multilingual-e5-large-instruct** | 1024 | 514 | 다국어 강점 | 다국어 서비스 |
 | **bge-m3** | 1024 | 8,192 | 한국어 포함 다국어 | 한국어 RAG |
@@ -741,9 +745,9 @@ print(f"문서1 임베딩 차원: {len(doc_vectors[0])}")     # 1024
      │
      ├─ 매우 긴 문서(128K 토큰) → Cohere embed-v4.0
      │
-     ├─ 코드/기술 문서 검색 → Voyage voyage-3-large
+     ├─ 범용/다국어 검색 → Voyage voyage-3-large (코드 특화: voyage-code-3)
      │
-     └─ Google Cloud 사용 중 → Gemini Embedding
+     └─ Google Cloud 사용 중 → gemini-embedding-001
 ```
 
 ---
@@ -1315,7 +1319,7 @@ if __name__ == "__main__":
         return chunks
     ```
 
-    **방법 2: 긴 컨텍스트 모델 사용** — Cohere embed-v4.0(128K 토큰), GTE-Qwen2-7B(131K 토큰)
+    **방법 2: 긴 컨텍스트 모델 사용** — Cohere embed-v4.0(128K 토큰), GTE-Qwen2-7B(32K 토큰)
 
     대부분의 RAG 시스템은 방법 1(청킹)을 사용합니다. 다음 챕터에서 자세히 다룹니다!
 
@@ -1344,7 +1348,7 @@ if __name__ == "__main__":
 
     **모델 선택 기준**
 
-    4. **상용**: OpenAI(범용/가성비), Cohere(장문 128K), Voyage(코드)
+    4. **상용**: OpenAI(범용/가성비), Cohere(장문 128K), Voyage(범용/다국어, 코드 특화는 voyage-code-3)
     5. **오픈소스**: bge-m3(한국어 다국어), GTE-Qwen2(장문), nomic(경량)
     6. RAG에선 **MTEB Retrieval 점수**가 핵심 지표
 
