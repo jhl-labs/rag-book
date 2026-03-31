@@ -216,7 +216,7 @@ OPENSEARCH_INDEX=enterprise-docs
 # collectors/jira_collector.py
 
 from jira import JIRA
-from langchain.schema import Document
+from langchain_core.documents import Document
 from datetime import datetime, timezone
 from typing import Optional
 import time
@@ -427,11 +427,12 @@ class JiraCollector:
 # collectors/github_collector.py
 
 from github import Github, RateLimitExceededException, GithubException
-from langchain.schema import Document
+from langchain_core.documents import Document
 from datetime import datetime
 from typing import Optional
 import time
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -591,7 +592,6 @@ class GitHubCollector:
         if not text:
             return ""
         # 이미지 링크 제거 (텍스트 검색에 불필요)
-        import re
         text = re.sub(r'!\[.*?\]\(.*?\)', '[이미지]', text)
         # 긴 코드 블록은 요약 (토큰 절약)
         text = re.sub(r'```[\s\S]{500,}?```', '[코드 블록 생략]', text)
@@ -609,7 +609,7 @@ class GitHubCollector:
 # collectors/confluence_collector.py
 
 from atlassian import Confluence
-from langchain.schema import Document
+from langchain_core.documents import Document
 from bs4 import BeautifulSoup  # HTML 파싱 라이브러리
 from datetime import datetime
 from typing import Optional
@@ -817,10 +817,10 @@ class ConfluenceCollector:
 ```python
 # core/indexer.py
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import OpenSearchVectorSearch
-from langchain.schema import Document
+from langchain_core.documents import Document
 from typing import Optional
 import hashlib
 import logging
@@ -1273,7 +1273,10 @@ class EnterpriseRAGAgent:
         self.vectorstore = vectorstore
         self.llm = ChatOpenAI(model="gpt-4o", temperature=0)
         self.classifier = IntentClassifier()
-        self.chat_history = []
+        # ⚠️ chat_history는 인스턴스에 저장하지 않는다.
+        # 멀티유저 환경에서 여러 사용자가 같은 에이전트 인스턴스를 공유하면
+        # 대화 기록이 섞이는 버그가 발생한다.
+        # 대신 chat() 메서드에 session_history를 인자로 받는 방식을 사용한다.
 
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", self.SYSTEM_PROMPT),
@@ -1281,16 +1284,21 @@ class EnterpriseRAGAgent:
             ("human", "{question}")
         ])
 
-    def chat(self, question: str) -> AgentResponse:
+    def chat(self, question: str, session_history: list | None = None) -> AgentResponse:
         """
         사용자 질문에 대한 답변을 생성한다.
 
         Args:
             question: 사용자의 자연어 질문
+            session_history: 세션별 대화 기록 (멀티유저 세션 격리를 위해 외부에서 전달)
+                            Streamlit에서는 st.session_state["chat_history"]를 사용한다.
 
         Returns:
             AgentResponse: 답변, 출처, 신뢰도 등을 포함한 구조화된 응답
         """
+        # 세션 격리: 각 사용자의 대화 기록을 분리해서 관리
+        if session_history is None:
+            session_history = []
         # ── 1단계: 의도 분류 ──
         classification = self.classifier.classify(question)
         logger.info(f"의도 분류: {classification.intent.value} "
@@ -1321,7 +1329,7 @@ class EnterpriseRAGAgent:
             response = self.llm.invoke(
                 self.prompt.format_messages(
                     context=context,
-                    chat_history=self.chat_history,
+                    chat_history=session_history,
                     question=question
                 )
             )
@@ -1331,13 +1339,14 @@ class EnterpriseRAGAgent:
             answer = "죄송합니다. 답변 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 
         # ── 6단계: 대화 기록 저장 (멀티턴 대화를 위해) ──
-        self.chat_history.append(HumanMessage(content=question))
-        self.chat_history.append(AIMessage(content=answer))
+        # session_history는 호출자(Streamlit)가 st.session_state에서 관리한다.
+        session_history.append(HumanMessage(content=question))
+        session_history.append(AIMessage(content=answer))
 
         # 대화 기록이 너무 길어지면 오래된 것부터 제거
         # (LLM의 컨텍스트 윈도우 한도 대비)
-        if len(self.chat_history) > 20:
-            self.chat_history = self.chat_history[-20:]
+        if len(session_history) > 20:
+            del session_history[:-20]
 
         return AgentResponse(
             answer=answer,
@@ -1440,9 +1449,10 @@ class EnterpriseRAGAgent:
 
         return round(confidence, 2)
 
-    def reset(self):
-        """대화 기록을 초기화한다"""
-        self.chat_history = []
+    def reset(self, session_history: list | None = None):
+        """대화 기록을 초기화한다. session_history 리스트를 직접 비운다."""
+        if session_history is not None:
+            session_history.clear()
         logger.info("대화 기록 초기화")
 ```
 
@@ -1540,6 +1550,12 @@ if "agent" not in st.session_state:
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+# ✅ 세션 격리: 각 사용자(브라우저 탭)마다 별도의 chat_history를 유지한다.
+# @st.cache_resource로 공유되는 agent 인스턴스와 달리,
+# st.session_state는 사용자별로 분리되어 대화가 섞이지 않는다.
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []  # LangChain HumanMessage/AIMessage 리스트
 
 if "feedback" not in st.session_state:
     st.session_state.feedback = {}  # {message_index: "up" or "down"}
@@ -1665,10 +1681,13 @@ def process_question(question: str):
         "content": question
     })
 
-    # 응답 생성
+    # 응답 생성 (사용자별 세션 history 전달 → 멀티유저 격리)
     with st.chat_message("assistant"):
         with st.spinner("🔍 검색 중..."):
-            response = st.session_state.agent.chat(question)
+            response = st.session_state.agent.chat(
+                question,
+                session_history=st.session_state.chat_history
+            )
 
         st.markdown(response.answer)
 
@@ -2290,10 +2309,10 @@ services:
 # starter_project.py
 # 실행: python starter_project.py
 
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_chroma import Chroma  # 로컬 벡터 DB (설치 불필요)
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 import os
 

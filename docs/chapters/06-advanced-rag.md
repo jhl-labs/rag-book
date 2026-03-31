@@ -2002,6 +2002,148 @@ COMPLEX 질문 (전체의 ___%) → 전략: ___________
 
 ---
 
+## 7. 2024-2025 최신 기법 소개
+
+### Graph RAG (Microsoft, 2024)
+
+문서를 **지식 그래프(Knowledge Graph)**로 구조화하여 커뮤니티 요약 기반 검색을 수행한다.
+
+!!! note "실생활 비유"
+    벡터 검색이 "비슷한 문장 찾기"라면, Graph RAG는 "관계 지도를 그려서 연결된 개념 찾기"
+
+- **해결하는 문제**: "이 프로젝트의 전체적인 기술 스택은?" 같은 전체 요약 질문
+- **벡터 검색의 한계**: 개별 청크에 분산된 정보를 종합하기 어려움
+- **Graph RAG 방식**: 엔티티(사람, 기술, 프로젝트)와 관계를 추출 → 커뮤니티 검출 → 커뮤니티별 요약 생성 → 요약 기반 검색
+
+```python
+# Microsoft의 graphrag 라이브러리
+# pip install graphrag
+from graphrag.index import run_indexing
+from graphrag.query import run_local_search, run_global_search
+
+# Global Search: 전체 요약 질문에 적합
+result = run_global_search("프로젝트의 핵심 기술 스택을 요약해줘")
+
+# Local Search: 특정 엔티티 관련 질문에 적합
+result = run_local_search("김철수가 참여한 프로젝트와 사용한 기술은?")
+```
+
+| 구분 | 벡터 검색 | Graph RAG |
+|------|-----------|-----------|
+| 강점 | 유사 문장 검색 | 관계/요약 질문 |
+| 약점 | 전체 요약 어려움 | 인덱싱 비용 높음 |
+| 적합한 질문 | "RAG란?" | "전체 아키텍처 요약" |
+
+---
+
+### Agentic RAG (Tool-use 기반)
+
+LLM이 **도구(Tool)**를 자율적으로 선택하여 검색하는 패턴. 단순 체인이 아닌 **에이전트 루프**로 동작한다.
+
+!!! note "실생활 비유"
+    기존 RAG: 도서관에서 한 번만 책을 찾아오는 사람
+    Agentic RAG: "이 책이 부족하네, 다른 서가도 찾아봐야겠다"고 스스로 판단하는 사서
+
+```python
+# LangGraph 기반 Agentic RAG 개념 코드
+from langgraph.graph import StateGraph, END
+
+def should_retrieve(state):
+    """검색이 필요한지 LLM이 판단"""
+    # LLM이 도구 호출 결정
+    ...
+
+def retrieve(state):
+    """벡터 DB에서 검색"""
+    ...
+
+def grade_documents(state):
+    """검색 결과 품질 평가 → 재검색 or 답변 생성"""
+    ...
+
+def generate(state):
+    """최종 답변 생성"""
+    ...
+
+# 상태 그래프 구성
+workflow = StateGraph(RAGState)
+workflow.add_node("retrieve", retrieve)
+workflow.add_node("grade", grade_documents)
+workflow.add_node("generate", generate)
+workflow.add_conditional_edges("grade", decide_next, {
+    "재검색": "retrieve",  # 품질 부족 → 다시 검색
+    "답변": "generate"     # 품질 충분 → 답변 생성
+})
+```
+
+**핵심 차이점**:
+
+| 구분 | 기존 RAG (Chain) | Agentic RAG |
+|------|-----------------|-------------|
+| 검색 횟수 | 1회 고정 | 필요시 반복 |
+| 도구 선택 | 하드코딩 | LLM이 결정 |
+| 실패 처리 | 없음 | 자동 재시도/대체 |
+| 복잡도 | 낮음 | 높음 |
+
+---
+
+### ColBERT / Late Interaction
+
+Bi-Encoder(빠름)와 Cross-Encoder(정확) 사이의 **중간 지점**.
+
+```
+Bi-Encoder:    [쿼리] → 벡터1   [문서] → 벡터2   → 유사도(벡터1, 벡터2)
+Cross-Encoder: [쿼리 + 문서] → 하나의 모델 → 점수
+ColBERT:       [쿼리] → 토큰벡터들  [문서] → 토큰벡터들  → MaxSim(토큰 간 최대 유사도 합)
+```
+
+- **장점**: Cross-Encoder에 가까운 정확도 + Bi-Encoder에 가까운 속도
+- **라이브러리**: `ragatouille` 패키지로 쉽게 사용 가능
+
+```python
+from ragatouille import RAGPretrainedModel
+
+# ColBERTv2 모델 로드
+RAG = RAGPretrainedModel.from_pretrained("colbert-ir/colbertv2.0")
+
+# 인덱싱
+RAG.index(
+    collection=["문서1 내용", "문서2 내용", ...],
+    index_name="my_index"
+)
+
+# 검색
+results = RAG.search("RAG의 장점은?", k=3)
+```
+
+---
+
+### Contextual Retrieval (Anthropic, 2024)
+
+각 청크에 **LLM이 생성한 문맥 설명**을 추가하여 검색 정확도를 높이는 기법.
+
+- **문제**: 청크만으로는 "이 내용이 문서 전체에서 어떤 위치인지" 알 수 없음
+- **해결**: LLM이 각 청크의 문맥을 자동 요약하여 prepend
+
+```python
+def add_contextual_description(chunk, full_document, llm):
+    """Anthropic Contextual Retrieval 구현"""
+    prompt = f"""다음은 전체 문서입니다:
+{full_document}
+
+다음은 문서의 한 부분입니다:
+{chunk}
+
+이 부분이 전체 문서에서 어떤 맥락에 위치하는지 간결하게 설명하세요 (50자 이내).
+"""
+    context = llm.invoke(prompt).content
+    return f"{context}\n\n{chunk}"
+```
+
+- **효과**: 검색 실패율 49% 감소, Reranking 결합 시 67% 감소 (Anthropic 연구)
+
+---
+
 ## 핵심 요약
 
 !!! abstract "핵심 요약"
@@ -2014,12 +2156,18 @@ COMPLEX 질문 (전체의 ___%) → 전략: ___________
     **검색 개선**
     - **Hybrid Search**: 벡터 + BM25 결합 → 의미 검색 + 키워드 검색의 장점 모두
     - **Reranking**: Bi-Encoder로 넓게 검색 → Cross-Encoder로 정밀 재순위
+    - **ColBERT**: Bi-Encoder와 Cross-Encoder의 장점을 결합한 Late Interaction 방식
 
     **생성 개선**
     - **Contextual Compression**: 긴 문서에서 관련 부분만 추출 → 컨텍스트 낭비 방지
-    - **Self-RAG**: 답변 자기 평가 + 재시도 → 환각 감소, 완전성 향상
+    - **Self-RAG**: 답변 자기 평가 + 재시도 → 환각 감소, 완전성 향상 (반성 토큰 파인튜닝 모델 기반)
     - **CRAG**: 검색 품질 평가 + 웹 검색 보완 → 로컬 DB 부족 시 대응
     - **Adaptive RAG**: 복잡도별 자동 전략 선택 → 비용 + 성능 균형
+
+    **2024-2025 최신 기법**
+    - **Graph RAG**: 관계/요약 질문에 벡터 검색을 보완 → 전체 문서 종합 질문에 강력
+    - **Agentic RAG**: LLM이 검색 도구를 자율적으로 선택하는 2025년 표준 패턴
+    - **Contextual Retrieval**: 청크에 LLM 생성 문맥 설명 추가 → 검색 실패율 49% 감소
 
     **실전 원칙**
     1. 단일 기법보다 **조합**이 훨씬 강력하다
@@ -2027,3 +2175,4 @@ COMPLEX 질문 (전체의 ___%) → 전략: ___________
     3. 먼저 **Hybrid Search + Reranking**으로 시작하라 (대부분의 케이스 커버)
     4. 복잡한 질문이 많다면 **Query Decomposition** 추가
     5. 높은 정확도가 필요하면 **Self-RAG** 추가
+    6. 전체 요약/관계 질문이 많다면 **Graph RAG** 도입 검토
