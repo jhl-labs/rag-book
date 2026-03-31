@@ -1,0 +1,56 @@
+site_name: "RAG 핵심 가이드북"
+site_description: "LLM을 위한 RAG(Retrieval Augmented Generation) 핵심 학습 자료"
+site_url: "https://jhl-labs.github.io/rag-book/"
+repo_url: "https://github.com/jhl-labs/rag-book"
+repo_name: "jhl-labs/rag-book"
+
+theme:
+  name: material
+  language: ko
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: 다크 모드로 전환
+    - scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: 라이트 모드로 전환
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - admonition
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - "홈": index.md
+  - "챕터":
+    - "1. RAG 개요": chapters/01-rag-overview.md
+    - "2. 임베딩 모델": chapters/02-embedding-models.md
+    - "3. 문서 청킹 전략": chapters/03-chunking-strategies.md
+    - "4. 벡터 데이터베이스": chapters/04-vector-databases.md
+    - "5. RAG 파이프라인 구현": chapters/05-rag-pipeline.md
+    - "6. 고급 RAG 기법": chapters/06-advanced-rag.md
+    - "7. 실전 프로젝트: 업무 AI 검색 에이전트": chapters/07-enterprise-rag-project.md
