@@ -215,7 +215,7 @@ sample_text = """
 #### 코드 예시 (단계별 설명 포함)
 
 ```python
-from langchain.text_splitter import CharacterTextSplitter
+from langchain_text_splitters import CharacterTextSplitter
 
 # 1단계: 분할기 생성
 # chunk_size: 각 청크의 최대 글자 수
@@ -317,7 +317,7 @@ for i, chunk in enumerate(chunks):
 #### 코드 예시 (단계별 설명 포함)
 
 ```python
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # 분할기 생성
 # separators: 시도할 구분자 목록 (우선순위 순서)
@@ -370,8 +370,8 @@ for i, chunk in enumerate(chunks):
 실제 RAG에서는 단순 텍스트보다 **메타데이터**가 포함된 Document 객체를 주로 사용합니다.
 
 ```python
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Document 객체 생성 (메타데이터 포함)
 # page_content: 실제 텍스트 내용
@@ -500,7 +500,7 @@ for i, chunk in enumerate(chunks):
 
     ```python
     # 비용을 줄이고 싶다면 로컬 임베딩 모델 사용
-    from langchain_community.embeddings import HuggingFaceEmbeddings
+    from langchain_huggingface import HuggingFaceEmbeddings
 
     # 무료 로컬 임베딩 모델 (인터넷 없이도 작동)
     embeddings = HuggingFaceEmbeddings(
@@ -539,7 +539,7 @@ for i, chunk in enumerate(chunks):
 #### 4-1. 마크다운 헤더 기반 청킹
 
 ```python
-from langchain.text_splitter import MarkdownHeaderTextSplitter
+from langchain_text_splitters import MarkdownHeaderTextSplitter
 
 # 마크다운 문서 예시
 markdown_doc = """
@@ -618,7 +618,7 @@ for i, chunk in enumerate(chunks):
 #### 4-2. 마크다운 + 재귀 분할 결합 (실전 패턴)
 
 ```python
-from langchain.text_splitter import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 # 1단계: 헤더 기반으로 대분할
 md_splitter = MarkdownHeaderTextSplitter(
@@ -646,7 +646,7 @@ print(f"최종 분할 후: {len(final_chunks)}개")
 #### 4-3. HTML 문서 청킹
 
 ```python
-from langchain.text_splitter import HTMLHeaderTextSplitter
+from langchain_text_splitters import HTMLHeaderTextSplitter
 
 # HTML 문서를 헤더 구조로 분할
 html_content = """
@@ -693,7 +693,7 @@ for chunk in chunks:
 코드 파일은 함수나 클래스 단위로 자르는 것이 가장 자연스럽습니다.
 
 ```python
-from langchain.text_splitter import RecursiveCharacterTextSplitter, Language
+from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 
 # Python 코드 전용 분할기
 # Language.PYTHON을 지정하면 Python 구문에 맞는 구분자를 자동으로 사용
@@ -734,7 +734,7 @@ for i, chunk in enumerate(chunks):
 !!! tip "지원하는 프로그래밍 언어"
     ```python
     # LangChain이 지원하는 언어 목록
-    from langchain.text_splitter import Language
+    from langchain_text_splitters import Language
 
     supported_languages = [
         Language.PYTHON,    # 파이썬
@@ -749,6 +749,25 @@ for i, chunk in enumerate(chunks):
         Language.SQL,       # SQL
     ]
     ```
+
+---
+
+### 6. Late Chunking (2024년 신기법)
+
+기존 청킹의 문맥 손실 문제를 해결하는 최신 기법. 문서 전체를 먼저 토큰 레벨로 임베딩한 후 청크로 분할한다.
+
+!!! note "실생활 비유"
+    기존 청킹: 책을 먼저 페이지로 자른 후 각 페이지를 요약
+    Late Chunking: 책 전체를 한 번 읽고 이해한 후 페이지로 나눔 → 문맥이 보존됨
+
+```
+기존 방식:  문서 → [청크 분할] → [각 청크 독립 임베딩]
+Late Chunking: 문서 → [전체 토큰 임베딩] → [청크 분할] → [토큰 임베딩 평균]
+```
+
+- **효과**: 대명사 참조("그것", "이 방법") 등 문맥 의존 검색에서 10-12% 정확도 향상
+- **지원**: Jina Embeddings에서 네이티브 지원
+- **한계**: 임베딩 모델이 긴 컨텍스트를 지원해야 함
 
 ---
 
@@ -814,7 +833,7 @@ for i, chunk in enumerate(chunks):
 
 ```python
 import tiktoken  # pip install tiktoken
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # tiktoken을 사용한 토큰 수 측정 함수
 # 모델에 따라 토크나이저가 다릅니다:
@@ -864,7 +883,7 @@ for i, chunk in enumerate(chunks):
 ### 나쁜 메타데이터 vs 좋은 메타데이터
 
 ```python
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 # 나쁜 예: 내용만 저장 (어디서 왔는지 알 수 없음)
 bad_chunk = Document(
@@ -906,8 +925,8 @@ good_chunk = Document(
 ```python
 import hashlib
 from datetime import datetime
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 def process_document_with_metadata(
     raw_text: str,
@@ -1048,8 +1067,8 @@ results_multi = vectorstore.similarity_search(
 ### 구현 코드
 
 ```python
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 
 def create_parent_child_chunks(
     documents: list,
@@ -1117,7 +1136,7 @@ print(f"  메타데이터: {child_chunks[0].metadata}")
 ### 청크 품질 검증 함수
 
 ```python
-from langchain.schema import Document
+from langchain_core.documents import Document
 from collections import Counter
 import re
 
@@ -1184,7 +1203,7 @@ def validate_chunks(
     return issues
 
 # 사용 예시
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=30)
 chunks = splitter.split_documents([Document(
@@ -1294,7 +1313,7 @@ print(repr(clean))
 ### 컨텍스트 헤더 추가 함수
 
 ```python
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 def add_context_headers(
     chunks: list,
@@ -1328,7 +1347,7 @@ def add_context_headers(
     return chunks
 
 # 사용 예시
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=30)
 chunks = splitter.split_documents([Document(
@@ -1350,6 +1369,11 @@ print(chunks_with_header[0].page_content[:150])
 
 머신러닝이란 무엇인가?
 ```
+
+!!! tip "Anthropic Contextual Retrieval (2024)"
+    각 청크에 LLM으로 문맥 요약을 자동 생성하여 추가하는 기법.
+    수동으로 헤더를 추가하는 위 방법의 자동화 버전이라고 볼 수 있다.
+    Anthropic 연구에서 검색 실패율 49% 감소, Reranking 결합 시 67% 감소를 보고했다.
 
 ---
 
@@ -1553,7 +1577,7 @@ table_doc = Document(
 다음 텍스트를 두 가지 방법으로 청킹해보고 결과를 비교해보세요.
 
 ```python
-from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
+from langchain_text_splitters import CharacterTextSplitter, RecursiveCharacterTextSplitter
 
 exercise_text = """
 인공지능의 역사
@@ -1601,8 +1625,8 @@ for i in range(min(3, len(fixed_chunks), len(recursive_chunks))):
 ### 연습 2: 메타데이터 파이프라인 구축
 
 ```python
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from datetime import datetime
 import hashlib
 
@@ -1648,7 +1672,7 @@ print(f"총 {len(result)}개 청크 생성됨")
 아래 코드에는 최소 3가지 문제가 있습니다. 찾아서 고쳐보세요.
 
 ```python
-from langchain.text_splitter import CharacterTextSplitter
+from langchain_text_splitters import CharacterTextSplitter
 
 # 이 코드에는 문제가 있습니다. 찾아서 수정하세요!
 problematic_splitter = CharacterTextSplitter(
@@ -1673,7 +1697,7 @@ problematic_splitter = CharacterTextSplitter(
 ### 팁 1: 청킹 실험 자동화
 
 ```python
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 def experiment_chunk_sizes(
     text: str,
@@ -1781,8 +1805,8 @@ print(f"같은 내용, 같은 ID: {id1 == id2}")  # True
 
 ```python
 import os
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 
 def process_large_file_incrementally(
     file_path: str,
@@ -1839,8 +1863,8 @@ import hashlib
 import re
 from datetime import datetime
 from typing import Optional
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
 
 class DocumentChunkingPipeline:
     """
@@ -1952,7 +1976,7 @@ print(f"메타데이터: {chunks[0].metadata}")
 
 ## 핵심 요약
 
-!!! summary "이것만 기억하자"
+!!! abstract "이것만 기억하자"
 
     **청킹의 본질:**
 
