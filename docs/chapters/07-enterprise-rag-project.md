@@ -1371,6 +1371,13 @@ class EnterpriseRAGAgent:
         # 여유분을 두고 검색 후 필터링
         fetch_k = k * 3 if sources else k
 
+        # ⚠️ 프로덕션 권장: Hybrid Search (BM25 + Vector)
+        # 현재는 벡터 검색만 사용하지만, 프로덕션에서는 BM25(키워드) + 벡터(의미)를
+        # 결합한 하이브리드 검색을 강력히 권장한다.
+        # 특히 "PROJ-1234" 같은 Jira 이슈 키를 정확히 찾으려면
+        # BM25 키워드 검색이 벡터 검색보다 훨씬 정확하다.
+        # OpenSearch는 기본적으로 하이브리드 검색을 지원한다:
+        #   vectorstore.similarity_search(query, search_type="hybrid", ...)
         docs = self.vectorstore.similarity_search(
             question,
             k=fetch_k
@@ -1455,6 +1462,42 @@ class EnterpriseRAGAgent:
             session_history.clear()
         logger.info("대화 기록 초기화")
 ```
+
+!!! tip "프로덕션 팁: Structured Output"
+    실제 프로덕션에서는 LLM의 답변을 자유 텍스트가 아닌 구조화된 형식으로 받는 것이 좋습니다:
+    ```python
+    from pydantic import BaseModel
+
+    class RAGResponse(BaseModel):
+        answer: str
+        citations: list[str]
+        confidence: float
+        needs_clarification: bool
+
+    structured_llm = llm.with_structured_output(RAGResponse)
+    ```
+
+!!! info "2025년 권장: Agentic RAG"
+    위 구현은 규칙 기반 소스 선택을 사용합니다. 프로덕션에서는
+    **LangGraph** 기반 Agentic RAG 패턴으로 LLM이 직접 검색 도구를
+    선택하고, 검색 결과를 평가하여 필요시 재검색하는 방식이 권장됩니다.
+    이를 통해 복합 질문에 대한 답변 품질이 크게 향상됩니다.
+
+!!! tip "프로덕션 팁: 임베딩 캐싱 (Redis)"
+    동일한 질문이 반복될 때마다 OpenAI 임베딩 API를 호출하면 비용이 낭비됩니다.
+    Redis를 활용해 임베딩 결과를 캐싱하면 API 호출을 크게 줄일 수 있습니다:
+    ```python
+    from langchain.embeddings import CacheBackedEmbeddings
+    from langchain.storage import RedisStore
+
+    store = RedisStore(redis_url="redis://localhost:6379")
+    cached_embeddings = CacheBackedEmbeddings.from_bytes_store(
+        underlying_embeddings=OpenAIEmbeddings(model="text-embedding-3-large"),
+        document_embedding_cache=store,
+        namespace="enterprise-rag-embeddings"
+    )
+    # 동일 텍스트는 Redis에서 즉시 반환, API 호출 없음
+    ```
 
 ---
 
@@ -1598,7 +1641,7 @@ with st.sidebar:
     if st.button("🗑️ 대화 초기화", use_container_width=True):
         st.session_state.messages = []
         st.session_state.feedback = {}
-        st.session_state.agent.reset()
+        st.session_state.agent.reset(session_history=st.session_state.chat_history)
         st.success("대화 기록이 초기화됐습니다.")
         st.rerun()
 
@@ -1820,32 +1863,42 @@ def sync_all(full_sync: bool = False):
     all_jira_docs = []
     for project_key in os.getenv("JIRA_PROJECT_KEYS", "").split(","):
         if project_key.strip():
-            docs = jira.collect(
-                project_key=project_key.strip(),
-                max_results=1000,
-                since=last_sync
-            )
-            all_jira_docs.extend(docs)
+            try:
+                docs = jira.collect(
+                    project_key=project_key.strip(),
+                    max_results=1000,
+                    since=last_sync
+                )
+                all_jira_docs.extend(docs)
+            except Exception as e:
+                logger.error(f"Jira 수집 실패 (project={project_key.strip()}): {e}")
+                # 한 프로젝트 실패해도 나머지는 계속 진행
 
     all_github_docs = []
     for repo in os.getenv("GITHUB_REPOS", "").split(","):
         if repo.strip():
-            docs = github.collect(
-                repo_name=repo.strip(),
-                max_items=500,
-                since=last_sync
-            )
-            all_github_docs.extend(docs)
+            try:
+                docs = github.collect(
+                    repo_name=repo.strip(),
+                    max_items=500,
+                    since=last_sync
+                )
+                all_github_docs.extend(docs)
+            except Exception as e:
+                logger.error(f"GitHub 수집 실패 (repo={repo.strip()}): {e}")
 
     all_confluence_docs = []
     for space_key in os.getenv("CONFLUENCE_SPACE_KEYS", "").split(","):
         if space_key.strip():
-            docs = confluence.collect(
-                space_key=space_key.strip(),
-                limit=500,
-                since=last_sync
-            )
-            all_confluence_docs.extend(docs)
+            try:
+                docs = confluence.collect(
+                    space_key=space_key.strip(),
+                    limit=500,
+                    since=last_sync
+                )
+                all_confluence_docs.extend(docs)
+            except Exception as e:
+                logger.error(f"Confluence 수집 실패 (space={space_key.strip()}): {e}")
 
     # ── 인덱싱 ──
     indexer = EnterpriseIndexer(
@@ -2218,6 +2271,37 @@ services:
 
 ---
 
+## Step 6: 평가 & 모니터링
+
+### RAGAS 기반 품질 평가
+
+```python
+# pip install ragas
+from ragas.metrics import faithfulness, answer_relevancy, context_precision
+from ragas import evaluate
+
+# 테스트 데이터셋으로 평가
+result = evaluate(
+    dataset,
+    metrics=[faithfulness, answer_relevancy, context_precision]
+)
+print(result)
+```
+
+### LangSmith 연동 (Observability)
+
+```python
+import os
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_API_KEY"] = "your-langsmith-key"
+os.environ["LANGCHAIN_PROJECT"] = "enterprise-rag"
+
+# 이후 모든 LangChain 호출이 자동으로 LangSmith에 기록됨
+# → 프롬프트, 검색 결과, 응답, 지연시간, 토큰 사용량 추적 가능
+```
+
+---
+
 ## 자주 묻는 질문 (FAQ)
 
 ??? question "Q: OpenSearch 대신 다른 벡터 DB를 사용할 수 있나요?"
@@ -2523,7 +2607,7 @@ def handle_incident(incident_description: str) -> str:
 
 ## 핵심 요약
 
-!!! summary "이것만 기억하자"
+!!! abstract "핵심 요약"
     1. **데이터 수집**: Jira/GitHub/Confluence API로 문서를 가져올 때 페이지네이션, Rate Limit, 증분 동기화를 반드시 처리한다.
     2. **인덱싱 품질**: 중복 제거, 텍스트 정제, 컨텍스트 헤더 추가가 검색 품질을 크게 좌우한다.
     3. **의도 분류**: 질문의 종류를 파악해서 적합한 소스만 검색하면 정확도가 올라간다.
