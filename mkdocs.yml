@@ -54,3 +54,4 @@ nav:
     - "5. RAG 파이프라인 구현": chapters/05-rag-pipeline.md
     - "6. 고급 RAG 기법": chapters/06-advanced-rag.md
     - "7. 실전 프로젝트: 업무 AI 검색 에이전트": chapters/07-enterprise-rag-project.md
+    - "8. Context7과 MCP 기반 RAG": chapters/08-context7-mcp-rag.md
