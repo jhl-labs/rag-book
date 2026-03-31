@@ -407,7 +407,7 @@ index_body = {
                 "method": {
                     "name": "hnsw",       # 알고리즘: HNSW 사용
                     "space_type": "cosinesimil",  # 유사도 측정 방법: 코사인
-                    "engine": "nmslib",   # 내부 엔진 (nmslib가 가장 안정적)
+                    "engine": "faiss",    # faiss 권장 (nmslib는 OpenSearch 2.19+에서 deprecated)
                     "parameters": {
                         "m": 16,          # 각 노드의 연결 수 (많을수록 정확, 메모리 증가)
                         "ef_construction": 64  # 인덱스 구축 시 탐색 범위
@@ -696,6 +696,11 @@ results = hybrid_search("시스템이 갑자기 멈춰요", semantic_weight=0.8)
 for r in results:
     print(f"  [{r['score']:.3f}] {r['content'][:80]}")
 ```
+
+!!! warning "하이브리드 검색 가중치 설정"
+    OpenSearch의 hybrid 쿼리에서 `boost`로는 정밀한 가중치 조절이 어렵습니다.
+    프로덕션에서는 **Search Pipeline**의 `normalization-processor`를 사용하여
+    가중치를 설정하는 것이 권장됩니다.
 
 ### 4.9 LangChain 연동
 
@@ -1184,9 +1189,19 @@ delete_document(id3)
 
 ### 5.9 LangChain 연동
 
+!!! warning "LangChain PGVector 패키지 변경"
+    `langchain_community.vectorstores.PGVector`는 deprecated 되었습니다.
+    신규 프로젝트에서는 `langchain-postgres` 패키지 사용이 권장됩니다:
+    ```bash
+    pip install langchain-postgres
+    ```
+    ```python
+    from langchain_postgres.vectorstores import PGVector  # 신규 권장 방식
+    ```
+
 ```python
 # pgvector_langchain.py
-from langchain_community.vectorstores import PGVector
+from langchain_community.vectorstores import PGVector  # deprecated: langchain-postgres 패키지 권장
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 
@@ -1250,6 +1265,10 @@ results = vectorstore.similarity_search(
     CREATE INDEX ON documents
     USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);   -- 10만 문서면 lists=316 추천
+
+    -- ⚠️ IVFFlat 주의: 인덱스 생성 후 반드시 VACUUM을 실행해야
+    -- 클러스터 학습 데이터가 확정되어 검색이 정상 동작합니다.
+    -- VACUUM documents;
     ```
 
     **검색 시 ef_search 조절**:
@@ -1333,6 +1352,15 @@ pip install meilisearch openai
 # ⑤ Meilisearch Dashboard 접속 (브라우저)
 # http://localhost:7700 → Master Key 입력 → GUI로 데이터 확인 가능!
 ```
+
+!!! warning "벡터 검색 활성화 필수"
+    Meilisearch의 벡터 검색은 실험적 기능이므로, Docker 실행 후 반드시 활성화해야 합니다:
+    ```bash
+    curl -X PATCH 'http://localhost:7700/experimental-features/' \
+      -H 'Content-Type: application/json' \
+      -H 'Authorization: Bearer your-master-key' \
+      --data-binary '{"vectorStore": true}'
+    ```
 
 !!! tip "Meilisearch 대시보드"
     `http://localhost:7700`에 접속하면 웹 GUI가 열린다.
@@ -1649,7 +1677,7 @@ from openai import OpenAI
 openai_client = OpenAI()
 
 # ── 모드 1: 인메모리 (테스트용, 프로그램 종료 시 데이터 사라짐) ──
-client = chromadb.Client()
+client = chromadb.Client()  # 구 API; 신규 API는 chromadb.EphemeralClient() 권장
 
 # ── 모드 2: 영구 저장 (로컬 파일에 저장) ──
 # client = chromadb.PersistentClient(path="./chroma_db")
@@ -2131,7 +2159,7 @@ for test in test_queries:
 
 ## 12. 핵심 요약
 
-!!! summary "이것만 기억하자"
+!!! abstract "핵심 요약"
 
     **개념 정리**:
 

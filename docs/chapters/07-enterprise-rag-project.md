@@ -216,7 +216,7 @@ OPENSEARCH_INDEX=enterprise-docs
 # collectors/jira_collector.py
 
 from jira import JIRA
-from langchain.schema import Document
+from langchain_core.documents import Document
 from datetime import datetime, timezone
 from typing import Optional
 import time
@@ -427,11 +427,12 @@ class JiraCollector:
 # collectors/github_collector.py
 
 from github import Github, RateLimitExceededException, GithubException
-from langchain.schema import Document
+from langchain_core.documents import Document
 from datetime import datetime
 from typing import Optional
 import time
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -591,7 +592,6 @@ class GitHubCollector:
         if not text:
             return ""
         # 이미지 링크 제거 (텍스트 검색에 불필요)
-        import re
         text = re.sub(r'!\[.*?\]\(.*?\)', '[이미지]', text)
         # 긴 코드 블록은 요약 (토큰 절약)
         text = re.sub(r'```[\s\S]{500,}?```', '[코드 블록 생략]', text)
@@ -609,7 +609,7 @@ class GitHubCollector:
 # collectors/confluence_collector.py
 
 from atlassian import Confluence
-from langchain.schema import Document
+from langchain_core.documents import Document
 from bs4 import BeautifulSoup  # HTML 파싱 라이브러리
 from datetime import datetime
 from typing import Optional
@@ -817,10 +817,10 @@ class ConfluenceCollector:
 ```python
 # core/indexer.py
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import OpenSearchVectorSearch
-from langchain.schema import Document
+from langchain_core.documents import Document
 from typing import Optional
 import hashlib
 import logging
@@ -1273,7 +1273,10 @@ class EnterpriseRAGAgent:
         self.vectorstore = vectorstore
         self.llm = ChatOpenAI(model="gpt-4o", temperature=0)
         self.classifier = IntentClassifier()
-        self.chat_history = []
+        # ⚠️ chat_history는 인스턴스에 저장하지 않는다.
+        # 멀티유저 환경에서 여러 사용자가 같은 에이전트 인스턴스를 공유하면
+        # 대화 기록이 섞이는 버그가 발생한다.
+        # 대신 chat() 메서드에 session_history를 인자로 받는 방식을 사용한다.
 
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", self.SYSTEM_PROMPT),
@@ -1281,16 +1284,21 @@ class EnterpriseRAGAgent:
             ("human", "{question}")
         ])
 
-    def chat(self, question: str) -> AgentResponse:
+    def chat(self, question: str, session_history: list | None = None) -> AgentResponse:
         """
         사용자 질문에 대한 답변을 생성한다.
 
         Args:
             question: 사용자의 자연어 질문
+            session_history: 세션별 대화 기록 (멀티유저 세션 격리를 위해 외부에서 전달)
+                            Streamlit에서는 st.session_state["chat_history"]를 사용한다.
 
         Returns:
             AgentResponse: 답변, 출처, 신뢰도 등을 포함한 구조화된 응답
         """
+        # 세션 격리: 각 사용자의 대화 기록을 분리해서 관리
+        if session_history is None:
+            session_history = []
         # ── 1단계: 의도 분류 ──
         classification = self.classifier.classify(question)
         logger.info(f"의도 분류: {classification.intent.value} "
@@ -1321,7 +1329,7 @@ class EnterpriseRAGAgent:
             response = self.llm.invoke(
                 self.prompt.format_messages(
                     context=context,
-                    chat_history=self.chat_history,
+                    chat_history=session_history,
                     question=question
                 )
             )
@@ -1331,13 +1339,14 @@ class EnterpriseRAGAgent:
             answer = "죄송합니다. 답변 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 
         # ── 6단계: 대화 기록 저장 (멀티턴 대화를 위해) ──
-        self.chat_history.append(HumanMessage(content=question))
-        self.chat_history.append(AIMessage(content=answer))
+        # session_history는 호출자(Streamlit)가 st.session_state에서 관리한다.
+        session_history.append(HumanMessage(content=question))
+        session_history.append(AIMessage(content=answer))
 
         # 대화 기록이 너무 길어지면 오래된 것부터 제거
         # (LLM의 컨텍스트 윈도우 한도 대비)
-        if len(self.chat_history) > 20:
-            self.chat_history = self.chat_history[-20:]
+        if len(session_history) > 20:
+            del session_history[:-20]
 
         return AgentResponse(
             answer=answer,
@@ -1362,6 +1371,13 @@ class EnterpriseRAGAgent:
         # 여유분을 두고 검색 후 필터링
         fetch_k = k * 3 if sources else k
 
+        # ⚠️ 프로덕션 권장: Hybrid Search (BM25 + Vector)
+        # 현재는 벡터 검색만 사용하지만, 프로덕션에서는 BM25(키워드) + 벡터(의미)를
+        # 결합한 하이브리드 검색을 강력히 권장한다.
+        # 특히 "PROJ-1234" 같은 Jira 이슈 키를 정확히 찾으려면
+        # BM25 키워드 검색이 벡터 검색보다 훨씬 정확하다.
+        # OpenSearch는 기본적으로 하이브리드 검색을 지원한다:
+        #   vectorstore.similarity_search(query, search_type="hybrid", ...)
         docs = self.vectorstore.similarity_search(
             question,
             k=fetch_k
@@ -1440,11 +1456,48 @@ class EnterpriseRAGAgent:
 
         return round(confidence, 2)
 
-    def reset(self):
-        """대화 기록을 초기화한다"""
-        self.chat_history = []
+    def reset(self, session_history: list | None = None):
+        """대화 기록을 초기화한다. session_history 리스트를 직접 비운다."""
+        if session_history is not None:
+            session_history.clear()
         logger.info("대화 기록 초기화")
 ```
+
+!!! tip "프로덕션 팁: Structured Output"
+    실제 프로덕션에서는 LLM의 답변을 자유 텍스트가 아닌 구조화된 형식으로 받는 것이 좋습니다:
+    ```python
+    from pydantic import BaseModel
+
+    class RAGResponse(BaseModel):
+        answer: str
+        citations: list[str]
+        confidence: float
+        needs_clarification: bool
+
+    structured_llm = llm.with_structured_output(RAGResponse)
+    ```
+
+!!! info "2025년 권장: Agentic RAG"
+    위 구현은 규칙 기반 소스 선택을 사용합니다. 프로덕션에서는
+    **LangGraph** 기반 Agentic RAG 패턴으로 LLM이 직접 검색 도구를
+    선택하고, 검색 결과를 평가하여 필요시 재검색하는 방식이 권장됩니다.
+    이를 통해 복합 질문에 대한 답변 품질이 크게 향상됩니다.
+
+!!! tip "프로덕션 팁: 임베딩 캐싱 (Redis)"
+    동일한 질문이 반복될 때마다 OpenAI 임베딩 API를 호출하면 비용이 낭비됩니다.
+    Redis를 활용해 임베딩 결과를 캐싱하면 API 호출을 크게 줄일 수 있습니다:
+    ```python
+    from langchain.embeddings import CacheBackedEmbeddings
+    from langchain.storage import RedisStore
+
+    store = RedisStore(redis_url="redis://localhost:6379")
+    cached_embeddings = CacheBackedEmbeddings.from_bytes_store(
+        underlying_embeddings=OpenAIEmbeddings(model="text-embedding-3-large"),
+        document_embedding_cache=store,
+        namespace="enterprise-rag-embeddings"
+    )
+    # 동일 텍스트는 Redis에서 즉시 반환, API 호출 없음
+    ```
 
 ---
 
@@ -1541,6 +1594,12 @@ if "agent" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# ✅ 세션 격리: 각 사용자(브라우저 탭)마다 별도의 chat_history를 유지한다.
+# @st.cache_resource로 공유되는 agent 인스턴스와 달리,
+# st.session_state는 사용자별로 분리되어 대화가 섞이지 않는다.
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []  # LangChain HumanMessage/AIMessage 리스트
+
 if "feedback" not in st.session_state:
     st.session_state.feedback = {}  # {message_index: "up" or "down"}
 
@@ -1582,7 +1641,7 @@ with st.sidebar:
     if st.button("🗑️ 대화 초기화", use_container_width=True):
         st.session_state.messages = []
         st.session_state.feedback = {}
-        st.session_state.agent.reset()
+        st.session_state.agent.reset(session_history=st.session_state.chat_history)
         st.success("대화 기록이 초기화됐습니다.")
         st.rerun()
 
@@ -1665,10 +1724,13 @@ def process_question(question: str):
         "content": question
     })
 
-    # 응답 생성
+    # 응답 생성 (사용자별 세션 history 전달 → 멀티유저 격리)
     with st.chat_message("assistant"):
         with st.spinner("🔍 검색 중..."):
-            response = st.session_state.agent.chat(question)
+            response = st.session_state.agent.chat(
+                question,
+                session_history=st.session_state.chat_history
+            )
 
         st.markdown(response.answer)
 
@@ -1801,32 +1863,42 @@ def sync_all(full_sync: bool = False):
     all_jira_docs = []
     for project_key in os.getenv("JIRA_PROJECT_KEYS", "").split(","):
         if project_key.strip():
-            docs = jira.collect(
-                project_key=project_key.strip(),
-                max_results=1000,
-                since=last_sync
-            )
-            all_jira_docs.extend(docs)
+            try:
+                docs = jira.collect(
+                    project_key=project_key.strip(),
+                    max_results=1000,
+                    since=last_sync
+                )
+                all_jira_docs.extend(docs)
+            except Exception as e:
+                logger.error(f"Jira 수집 실패 (project={project_key.strip()}): {e}")
+                # 한 프로젝트 실패해도 나머지는 계속 진행
 
     all_github_docs = []
     for repo in os.getenv("GITHUB_REPOS", "").split(","):
         if repo.strip():
-            docs = github.collect(
-                repo_name=repo.strip(),
-                max_items=500,
-                since=last_sync
-            )
-            all_github_docs.extend(docs)
+            try:
+                docs = github.collect(
+                    repo_name=repo.strip(),
+                    max_items=500,
+                    since=last_sync
+                )
+                all_github_docs.extend(docs)
+            except Exception as e:
+                logger.error(f"GitHub 수집 실패 (repo={repo.strip()}): {e}")
 
     all_confluence_docs = []
     for space_key in os.getenv("CONFLUENCE_SPACE_KEYS", "").split(","):
         if space_key.strip():
-            docs = confluence.collect(
-                space_key=space_key.strip(),
-                limit=500,
-                since=last_sync
-            )
-            all_confluence_docs.extend(docs)
+            try:
+                docs = confluence.collect(
+                    space_key=space_key.strip(),
+                    limit=500,
+                    since=last_sync
+                )
+                all_confluence_docs.extend(docs)
+            except Exception as e:
+                logger.error(f"Confluence 수집 실패 (space={space_key.strip()}): {e}")
 
     # ── 인덱싱 ──
     indexer = EnterpriseIndexer(
@@ -2199,6 +2271,37 @@ services:
 
 ---
 
+## Step 6: 평가 & 모니터링
+
+### RAGAS 기반 품질 평가
+
+```python
+# pip install ragas
+from ragas.metrics import faithfulness, answer_relevancy, context_precision
+from ragas import evaluate
+
+# 테스트 데이터셋으로 평가
+result = evaluate(
+    dataset,
+    metrics=[faithfulness, answer_relevancy, context_precision]
+)
+print(result)
+```
+
+### LangSmith 연동 (Observability)
+
+```python
+import os
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_API_KEY"] = "your-langsmith-key"
+os.environ["LANGCHAIN_PROJECT"] = "enterprise-rag"
+
+# 이후 모든 LangChain 호출이 자동으로 LangSmith에 기록됨
+# → 프롬프트, 검색 결과, 응답, 지연시간, 토큰 사용량 추적 가능
+```
+
+---
+
 ## 자주 묻는 질문 (FAQ)
 
 ??? question "Q: OpenSearch 대신 다른 벡터 DB를 사용할 수 있나요?"
@@ -2290,10 +2393,10 @@ services:
 # starter_project.py
 # 실행: python starter_project.py
 
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_chroma import Chroma  # 로컬 벡터 DB (설치 불필요)
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 import os
 
@@ -2504,7 +2607,7 @@ def handle_incident(incident_description: str) -> str:
 
 ## 핵심 요약
 
-!!! summary "이것만 기억하자"
+!!! abstract "핵심 요약"
     1. **데이터 수집**: Jira/GitHub/Confluence API로 문서를 가져올 때 페이지네이션, Rate Limit, 증분 동기화를 반드시 처리한다.
     2. **인덱싱 품질**: 중복 제거, 텍스트 정제, 컨텍스트 헤더 추가가 검색 품질을 크게 좌우한다.
     3. **의도 분류**: 질문의 종류를 파악해서 적합한 소스만 검색하면 정확도가 올라간다.
